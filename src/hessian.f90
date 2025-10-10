@@ -5236,7 +5236,11 @@ double precision function electricfld(a,b,i,j,k,ii,jj,kk, &
 
   U = g* PCsquare
   Maxm = i+j+k+ii+jj+kk+2
+#ifdef MIRP
+  call mirp_FmT(Maxm,U,aux)
+#else
   call FmT(Maxm,U,aux)
+#endif
   constant = overlap(a,b,0,0,0,0,0,0,Ax,Ay,Az,Bx,By,Bz,Px,Py,Pz,g_table) &
        * 2.d0 * (g/Pi)**0.5d0
   do L = 0,maxm

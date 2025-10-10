@@ -139,8 +139,11 @@ subroutine cshell_eri_grad
                   !                         KCD=Kpri(Nprik,Npril)
 
                   T=RPQ*ROU
-
+#ifdef MIRP
+                  call mirp_FmT(NABCD,T,FM)
+#else
                   call FmT(NABCD,T,FM)
+#endif
                   do iitemp=0,NABCD
                      Yxiaotemp(1,1,iitemp)=FM(iitemp)/ABCDxiao
                   enddo

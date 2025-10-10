@@ -15,6 +15,12 @@ Subroutine FmT(MaxM,X,vals)
   implicit double precision (a-h,o-z)
   double precision, dimension(0:20) :: vals
 
+  write(OUTFILEHANDLE,'(a)')
+  write(OUTFILEHANDLE,'("| Error: ",a)') 'Using our fmt instead of MIRP'
+  write(OUTFILEHANDLE,'(a)')
+
+  stop 1
+
   PIE4 = PI/4.0d0
   XINV = 1.d0/X
   E = exp(-X)

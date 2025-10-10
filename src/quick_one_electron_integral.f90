@@ -100,7 +100,11 @@ double precision function repulsion_prim(a, b, c, d, &
 
    T = rho* PQsquare
    Maxm = i+j+k+ii+jj+kk+i2+j2+k2+ii2+jj2+kk2
+#ifdef MIRP
+   call mirp_FmT(Maxm,T,aux)
+#else
    call FmT(Maxm,T,aux)
+#endif
    ! constant = overlap(a,b,0,0,0,0,0,0,Ax,Ay,Az,Bx,By,Bz)
    ! .          *overlap(c,d,0,0,0,0,0,0,Cx,Cy,Cz,Dx,Dy,Dz)
    constant = ssoverlap(a,b,Ax,Ay,Az,Bx,By,Bz) &
@@ -565,8 +569,11 @@ double precision function attraction(a,b,i,j,k,ii,jj,kk,Ax,Ay,Az, &
 
    U = g* PCsquare
    Maxm = i+j+k+ii+jj+kk
+#ifdef MIRP
+   call mirp_FmT(Maxm,U,aux)
+#else
    call FmT(Maxm,U,aux)
-
+#endif
 !   g_table = g**(-1.5)
    constant = overlap(a,b,0,0,0,0,0,0,Ax,Ay,Az,Bx,By,Bz,Px,Py,Pz,g_table) &
          * 2.d0 * sqrt(g/Pi)

@@ -686,7 +686,11 @@ subroutine shellmp2(nstepmp2s,nsteplength)
                   !                         do iitemp=0,0
                   !                           Yxiaotemp(1,1,iitemp)=FM(iitemp)/ABCDxiao
                   !                         enddo
+#ifdef MIRP
+                  call mirp_FmT(NABCD,T,FM)
+#else
                   call FmT(NABCD,T,FM)
+#endif
                   do iitemp=0,NABCD
                      Yxiaotemp(1,1,iitemp)=FM(iitemp)/ABCDxiao
                   enddo

@@ -108,7 +108,11 @@ subroutine attrashell(IIsh, JJsh)
                 U = g* PCsquare
  
                ! Calculate the last term of Obara--Saika Eqn A20
+#ifdef MIRP
+               call mirp_FmT(Maxm,U,aux)
+#else
                call FmT(Maxm,U,aux)
+#endif
                ! Calculate all the auxilary integrals and store in attraxiao array
                do L = 0,maxm
 #if defined (OEPROP)
@@ -243,7 +247,11 @@ subroutine attrashell(IIsh, JJsh)
               PCsquare = (Px-Cx)**2 + (Py -Cy)**2 + (Pz -Cz)**2
               U = g* PCsquare
               !    Maxm = i+j+k+ii+jj+kk
+#ifdef MIRP
+              call mirp_FmT(Maxm,U,aux)
+#else
               call FmT(Maxm,U,aux)
+#endif
               do L = 0,maxm
 #if defined (OEPROP)
                 aux(L) = -1.0d0*aux(L)*constant

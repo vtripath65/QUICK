@@ -82,7 +82,11 @@ subroutine attrashellenergy(IIsh,JJsh)
 
             U = g* PCsquare
             !    Maxm = i+j+k+ii+jj+kk
+#ifdef MIRP
+            call mirp_FmT(Maxm,U,aux)
+#else
             call FmT(Maxm,U,aux)
+#endif
             do L = 0,maxm
                aux(L) = aux(L)*constant*Z
                attraxiao(1,1,L)=aux(L)

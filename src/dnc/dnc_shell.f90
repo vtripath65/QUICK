@@ -90,8 +90,11 @@ subroutine shellmp2divcon(i33,ittsub)
                      WPtemp(M)=W(M)-P(M)
                   enddo
                   T=RPQ*ROU
-
+#ifdef MIRP
+                  call mirp_FmT(NABCD,T,FM)
+#else
                   call FmT(NABCD,T,FM)
+#endif
                   do iitemp=0,NABCD
                      Yxiaotemp(1,1,iitemp)=FM(iitemp)/ABCDxiao
                   enddo
