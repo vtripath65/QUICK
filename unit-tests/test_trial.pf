@@ -1,0 +1,14 @@
+@test
+subroutine test_assert_equal()
+    use PFUNIT
+    implicit none
+
+    integer, parameter:: i_expected = 24
+    real, parameter:: a_expected = 9.0
+
+    write(*,*)'Running unit test'
+
+    @assertEqual(i_expected, 24, 'i value not correct')
+!    @assertEqual(a_expected, 8.8, tolerance=0.05, message='a value not correct')
+
+end subroutine

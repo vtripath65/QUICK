@@ -377,6 +377,10 @@ include(QUICKCudaConfig)
 
 add_subdirectory(src)
 
+if(UNITTEST)
+  add_subdirectory(unit-tests)
+endif()
+
 if(NOT INSIDE_AMBER) # Amber is currently not set up for exported targets
 
 	#--------------------------------------------------------------	
