@@ -375,10 +375,13 @@ include(QUICKCudaConfig)
 #--------------------------------------------------------------	
 # Build code
 
+if(UNITTEST)
+  add_definitions(-DUNITTEST)
+endif()
+
 add_subdirectory(src)
 
 if(UNITTEST)
-  add_definitions(-DUNITTEST)
   add_subdirectory(unit-tests)
 endif()
 
