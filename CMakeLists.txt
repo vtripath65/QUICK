@@ -378,6 +378,7 @@ include(QUICKCudaConfig)
 add_subdirectory(src)
 
 if(UNITTEST)
+  add_definitions(-DUNITTEST)
   add_subdirectory(unit-tests)
 endif()
 

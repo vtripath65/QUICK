@@ -1,4 +1,4 @@
-@test
+@test(#ifdef=UNITTEST)
 subroutine test_assert_equal()
     use PFUNIT
     implicit none

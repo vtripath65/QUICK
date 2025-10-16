@@ -17,6 +17,9 @@
 !---------------------------------------------------------------------!
 module quick_oeproperties_module
  private
+#ifdef UNITTEST
+ public :: esp_nuc
+#endif
  public :: compute_oeprop
 
  contains
