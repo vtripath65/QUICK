@@ -1,4 +1,4 @@
-module test_mks_surf
+module test_espgrid_spacing
     use PFUNIT
     use quick_molsurface_module, only: generate_MKS_surfaces
     use quick_molspec_module, only: natom, quick_molspec, xyz
@@ -17,6 +17,7 @@ module test_mks_surf
       xyz=reshape([0.0,0.0,0.0,1.79524,0.0,0.0,0.0,1.79524,0.0],[3,natom])
       quick_molspec%chg=[8,1,1]
       quick_method%vdw_radii = "BONDI"
+      quick_method%espgrid_spacing = 0.75
 
     end subroutine setup
 
@@ -24,19 +25,19 @@ module test_mks_surf
     subroutine testing()
         implicit none
 
-        integer, parameter:: npoints = 5698
+        integer, parameter:: npoints = 620
         double precision, parameter:: tol = 1.0e-6
-        double precision, parameter:: surface_points(5) = [2.22863998487, -0.50790965741, -1.84184492561, -4.72077049624, 2.04504900046] 
+        double precision, parameter:: surface_points(5) = [-2.86088748325, -1.39493629379, -2.38643717751, -3.14267919974, 4.44885648294] 
 
         call generate_MKS_surfaces()
 
         @assertEqual(quick_molspec%nvdwpoint, npoints, message='no of points on van der waals surface not correct')
 
-        @assertEqual(quick_molspec%vdwpointxyz(1,21), surface_points(1), tolerance=tol, message='1st tested vdwpointxyz not correct')
-        @assertEqual(quick_molspec%vdwpointxyz(2,346), surface_points(2), tolerance=tol, message='2nd tested vdwpointxyz not correct')
-        @assertEqual(quick_molspec%vdwpointxyz(3,899), surface_points(3), tolerance=tol, message='3rd tested vdwpointxyz not correct')
-        @assertEqual(quick_molspec%vdwpointxyz(3,2468), surface_points(4), tolerance=tol, message='4th tested vdwpointxyz not correct')
-        @assertEqual(quick_molspec%vdwpointxyz(2,4232), surface_points(5), tolerance=tol, message='5th tested vdwpointxyz not correct')
+        @assertEqual(quick_molspec%vdwpointxyz(2,42), surface_points(1), tolerance=tol, message='1st tested vdwpointxyz not correct')
+        @assertEqual(quick_molspec%vdwpointxyz(1,155), surface_points(2), tolerance=tol, message='2nd tested vdwpointxyz not correct')
+        @assertEqual(quick_molspec%vdwpointxyz(3,234), surface_points(3), tolerance=tol, message='3rd tested vdwpointxyz not correct')
+        @assertEqual(quick_molspec%vdwpointxyz(2,433), surface_points(4), tolerance=tol, message='4th tested vdwpointxyz not correct')
+        @assertEqual(quick_molspec%vdwpointxyz(1,586), surface_points(5), tolerance=tol, message='5th tested vdwpointxyz not correct')
     
     end subroutine testing
 
@@ -49,4 +50,4 @@ module test_mks_surf
 
     end subroutine cleanup
 
-end module test_mks_surf
+end module test_espgrid_spacing
