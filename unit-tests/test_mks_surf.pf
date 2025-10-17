@@ -1,0 +1,43 @@
+module test_mks_surf
+    use PFUNIT
+    use quick_molsurface_module, only: generate_MKS_surfaces
+    use quick_molspec_module, only: natom, quick_molspec, xyz
+    use quick_method_module, only: quick_method
+
+    contains
+
+    @before
+    subroutine setup()
+      implicit none
+
+      natom=3
+      allocate(quick_molspec%chg(natom))
+      allocate(xyz(3,natom))
+
+      xyz=reshape([0.0,0.0,0.0,1.79524,0.0,0.0,0.0,1.79524,0.0],[3,natom])
+      quick_molspec%chg=[8,1,1]
+      quick_method%vdw_radii = "BONDI"
+
+    end subroutine setup
+
+    @test(#ifdef=UNITTEST)
+    subroutine testing()
+        implicit none
+
+        integer, parameter:: npoints = 5698   
+ 
+        call generate_MKS_surfaces()
+
+        @assertEqual(quick_molspec%nvdwpoint, npoints, message='no of points on van der waals surface not correct')
+    
+    end subroutine testing
+
+    @after
+    subroutine cleanup()
+
+    deallocate(quick_molspec%chg)
+    deallocate(xyz)
+
+    end subroutine cleanup
+
+end module test_mks_surf

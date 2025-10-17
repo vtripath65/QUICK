@@ -31,9 +31,17 @@ module test_esp_nuc
 
         call esp_nuc(npoints, xyz_points, esp_nuclear)
 
-        @assertEqual(esp_nuclear(1), target_esp(1), tolerance=0.000001, message='esp_nuc(1) value not correct')
-        @assertEqual(esp_nuclear(2), target_esp(2), tolerance=0.000001, message='esp_nuc(2) value not correct')
+        @assertEqual(esp_nuclear(1), target_esp(1), tolerance=tol, message='esp_nuc(1) value not correct')
+        @assertEqual(esp_nuclear(2), target_esp(2), tolerance=tol, message='esp_nuc(2) value not correct')
     
     end subroutine testing
+
+    @after
+    subroutine cleanup()
+
+    deallocate(quick_molspec%chg)
+    deallocate(xyz)
+
+    end subroutine cleanup
 
 end module test_esp_nuc
