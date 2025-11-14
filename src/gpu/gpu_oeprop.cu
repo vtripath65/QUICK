@@ -30,6 +30,9 @@ static __constant__ int Sumindex[10] = {0, 0, 1, 4, 10, 20, 35, 56, 84, 120};
 #define REG_FP
 #define REG_SF
 #define REG_FS
+#define REG_DF
+#define REG_FD
+#define REG_DD
 //#define USE_PARTIAL_DP
 //#define USE_PARTIAL_PF
 //#define USE_PARTIAL_FP
