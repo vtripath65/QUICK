@@ -332,6 +332,8 @@ contains
        quick_qm_struct%Ecore=0.d0      ! atom-extcharge and atom-atom replusion
        quick_qm_struct%ECharge=0d0     ! extcharge-extcharge interaction
 
+       if(.not. quick_method%divcon) call sad_uelect(jscf,verbose,ierr)
+
        if (quick_method%diisscf .and. .not. quick_method%divcon) call sad_uelectdiis(jscf,verbose,ierr)
 
        if (verbose) call PrtAct(ioutfile,"End SAD USCF")   
@@ -342,6 +344,195 @@ contains
      return
 
   end subroutine sad_uscf
+
+
+  subroutine sad_uelect(jscf,verbose,ierr)
+
+     use allmod
+     use quick_gridpoints_module
+     use quick_scf_module
+     use quick_oei_module, only: bCalc1e
+     use quick_uscf_module, only: allocate_quick_uscf,deallocate_quick_uscf,alloperatorB
+
+     implicit none
+
+     ! variable inputed to return
+     integer :: jscf                ! scf interation
+     logical, intent(in) :: verbose
+     integer, intent(inout) :: ierr
+     double precision :: BIJ,DENSEJI,errormax,OJK,temp
+     double precision :: Sum2Mat,rms
+     integer :: I,J,K,L,IERROR
+  
+     double precision :: oldEnergy=0.0d0,E1e ! energy for last iteriation, and 1e-energy
+  
+     !---------------------------------------------------------------------------
+     ! The purpose of this subroutine is to utilize Pulay's accelerated
+     ! scf convergence as detailed in J. Comp. Chem, Vol 3, #4, pg 566-60, 1982.
+     ! At the beginning of this process, their is an approximate density
+     ! matrix.
+     ! The step in the procedure are:
+     ! 1)  Form the operator matrix for step i, O(i).
+     ! 2)  Form error matrix for step i.
+     ! e(i) = ODS - SDO
+     ! 3)  Move e to an orthogonal basis.  e'(i) = Transpose[X] .e(i). X
+     ! 4)  Store the e'(I) and O(i)
+     ! 5)  Form matrix B, which is:
+     !      _                                                 _
+     !     |                                                   |
+     !     |  B(1,1)      B(1,2)     . . .     B(1,J)      -1  |
+     !     |  B(2,1)      B(2,2)     . . .     B(2,J)      -1  |
+     !     |  .            .                     .          .  |
+     ! B = |  .            .                     .          .  |
+     !     |  .            .                     .          .  |
+     !     |  B(I,1)      B(I,2)     . . .     B(I,J)      -1  |
+     !     | -1            -1        . . .      -1          0  |
+     !     |_                                                 _|
+     ! Where B(i,j) = Trace(e(i) Transpose(e(j)) )
+     ! 6)  Solve B*COEFF = RHS which is:
+     ! _                                             _  _  _     _  _
+     ! |                                               ||    |   |    |
+     ! |  B(1,1)      B(1,2)     . . .     B(1,J)  -1  ||  C1|   |  0 |
+     ! |  B(2,1)      B(2,2)     . . .     B(2,J)  -1  ||  C2|   |  0 |
+     ! |  .            .                     .      .  ||  . |   |  0 |
+     ! |  .            .                     .      .  ||  . | = |  0 |
+     ! |  .            .                     .      .  ||  . |   |  0 |
+     ! |  B(I,1)      B(I,2)     . . .     B(I,J)  -1  ||  Ci|   |  0 |
+     ! | -1            -1        . . .      -1      0  || -L |   | -1 |
+     ! |_                                             _||_  _|   |_  _|
+     ! 7) Form a new operator matrix based on O(new) = [Sum over i] c(i)O(i)
+     ! 8) Diagonalize the operator matrix to form a new density matrix.
+     ! As in scf.F, each step wil be reviewed as we pass through the code.
+     !---------------------------------------------------------------------------
+  
+     call allocate_quick_uscf(ierr)
+  
+     if(verbose) write(ioutfile,'(30x," USCF ENERGY")')
+     if (quick_method%printEnergy) then
+        if(verbose) write(ioutfile,'("| ",72("-"))')
+     else
+        if(verbose) write(ioutfile,'("| ",42("-"))')
+     endif
+     if(verbose) write(ioutfile,'("| ","NCYC",6x)',advance="no")
+     if(verbose) write(ioutfile,'(" ENERGY ",8x,"DELTA_E",5x)',advance="no")
+     if(verbose) write(ioutfile,'(" MAX_ERR",4x,"RMS_CHG",4x,"MAX_CHG")')
+     if (quick_method%printEnergy) then
+        if(verbose) write(ioutfile,'("| ",72("-"))')
+     else
+        if(verbose) write(ioutfile,'("| ",42("-"))')
+     endif
+  
+     do while (jscf.lt.3)
+  
+  
+        !--------------------------------------------
+        ! 1)  Form the operator matrix for step i, O(i).
+        !--------------------------------------------
+  
+        ! Determine scf cycle
+        jscf=jscf+1
+  
+        !-----------------------------------------------
+        ! Before Delta Densitry Matrix, normal operator is implemented here
+        !-----------------------------------------------
+  
+        call sad_uscf_operator
+  
+  
+        quick_qm_struct%oSave(:,:) = quick_qm_struct%o(:,:)
+        quick_qm_struct%denseOld(:,:) = quick_qm_struct%dense(:,:)
+  
+        ! 3)  Form the beta operator matrix for step i, O(i).  (Store in alloperatorb array.)
+        quick_qm_struct%obSave(:,:) = quick_qm_struct%ob(:,:)
+        quick_qm_struct%densebOld(:,:) = quick_qm_struct%denseb(:,:)
+        
+        !-----------------------------------------------
+        ! 10) Diagonalize the operator matrix to form a new density matrix.
+        ! First you have to transpose this into an orthogonal basis, which
+        ! is accomplished by calculating Transpose[X] . O . X.
+        !-----------------------------------------------
+
+        quick_scratch%hold=matmul(quick_qm_struct%o,quick_qm_struct%x)
+        quick_qm_struct%o=matmul(quick_qm_struct%x,quick_scratch%hold)
+  
+        ! Now diagonalize the operator matrix.
+  
+        call DIAG(nbasis,quick_qm_struct%o,nbasis,quick_method%DMCutoff,V2,quick_qm_struct%E,&
+              quick_qm_struct%idegen,quick_qm_struct%vec,IERROR)
+
+  
+        ! Calculate C = XC' and form a new density matrix.
+        ! The C' is from the above diagonalization.  Also, save the previous
+        ! Density matrix to check for convergence.
+
+        quick_qm_struct%co=matmul(quick_qm_struct%x,quick_qm_struct%vec)
+  
+        quick_scratch%hold(:,:) = quick_qm_struct%dense(:,:) 
+  
+        ! Form new density matrix using MO coefficients
+        do I=1,nbasis
+            do J=1,nbasis
+                quick_qm_struct%dense(J,I) = 0.d0
+                do K=1,quick_molspec%nelec
+                    quick_qm_struct%dense(J,I) = quick_qm_struct%dense(J,I) + (quick_qm_struct%co(J,K)* &
+                    quick_qm_struct%co(I,K))
+                enddo
+            enddo
+        enddo
+
+        !-----------------------------------------------
+        ! 12) Diagonalize the beta operator matrix to form a new beta density matrix.
+        ! First you have to transpose this into an orthogonal basis, which
+        ! is accomplished by calculating Transpose[X] . O . X.
+        !-----------------------------------------------
+        quick_scratch%hold=matmul(quick_qm_struct%ob,quick_qm_struct%x)
+        quick_qm_struct%ob=matmul(quick_qm_struct%x,quick_scratch%hold)
+
+        ! Now diagonalize the operator matrix.
+
+        call DIAG(nbasis,quick_qm_struct%ob,nbasis,quick_method%DMCutoff,V2,quick_qm_struct%EB,&
+              quick_qm_struct%idegen,quick_qm_struct%vec,IERROR)
+
+        ! Calculate C = XC' and form a new density matrix.
+        ! The C' is from the above diagonalization.  Also, save the previous
+        ! Density matrix to check for convergence.
+        !        call DMatMul(nbasis,X,VEC,CO)    ! C=XC'
+
+        quick_qm_struct%cob=matmul(quick_qm_struct%x,quick_qm_struct%vec)
+
+        quick_scratch%hold(:,:) = quick_qm_struct%denseb(:,:)
+
+        ! Form new density matrix using MO coefficients
+        do I=1,nbasis
+            do J=1,nbasis
+                quick_qm_struct%denseb(J,I) = 0.d0
+                do K=1,quick_molspec%nelecb
+                    quick_qm_struct%denseb(J,I) = quick_qm_struct%denseb(J,I) + (quick_qm_struct%cob(J,K)* &
+                    quick_qm_struct%cob(I,K))
+                enddo
+            enddo
+        enddo
+
+        if(verbose) write (ioutfile,'("|",I3,1x)',advance="no") jscf
+        if(quick_method%printEnergy)then
+           if(verbose) write (ioutfile,'(F16.9,2x)',advance="no") quick_qm_struct%Eel+quick_qm_struct%Ecore
+           if (jscf.ne.1) then
+              if(verbose) write(ioutFile,'(E12.6,2x)') oldEnergy-quick_qm_struct%Eel-quick_qm_struct%Ecore
+           else
+              if(verbose) write(ioutFile,'(4x,"------",4x)')
+           endif
+           oldEnergy=quick_qm_struct%Eel+quick_qm_struct%Ecore
+        endif
+  
+        if(verbose) flush(ioutfile)
+  
+     enddo
+  
+  
+     call deallocate_quick_uscf(ierr)
+  
+     return
+  end subroutine sad_uelect
 
 
   subroutine sad_uelectdiis(jscf,verbose,ierr)
