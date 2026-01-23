@@ -159,8 +159,8 @@ contains
               return
            else
               ! Initial Guess
-              diagelement=dble(quick_molspec%nelec)/dble(nbasis)
-              diagelementb=dble(quick_molspec%nelecb)/dble(nbasis)+1.d-8
+              diagelement=0.0d0
+              diagelementb=0.0d0
               do I=1,nbasis
                  quick_qm_struct%dense(I,I)=diagelement
                  quick_qm_struct%denseb(I,I)=diagelementb
@@ -367,42 +367,9 @@ contains
      double precision :: oldEnergy=0.0d0,E1e ! energy for last iteriation, and 1e-energy
   
      !---------------------------------------------------------------------------
-     ! The purpose of this subroutine is to utilize Pulay's accelerated
-     ! scf convergence as detailed in J. Comp. Chem, Vol 3, #4, pg 566-60, 1982.
-     ! At the beginning of this process, their is an approximate density
-     ! matrix.
-     ! The step in the procedure are:
-     ! 1)  Form the operator matrix for step i, O(i).
-     ! 2)  Form error matrix for step i.
-     ! e(i) = ODS - SDO
-     ! 3)  Move e to an orthogonal basis.  e'(i) = Transpose[X] .e(i). X
-     ! 4)  Store the e'(I) and O(i)
-     ! 5)  Form matrix B, which is:
-     !      _                                                 _
-     !     |                                                   |
-     !     |  B(1,1)      B(1,2)     . . .     B(1,J)      -1  |
-     !     |  B(2,1)      B(2,2)     . . .     B(2,J)      -1  |
-     !     |  .            .                     .          .  |
-     ! B = |  .            .                     .          .  |
-     !     |  .            .                     .          .  |
-     !     |  B(I,1)      B(I,2)     . . .     B(I,J)      -1  |
-     !     | -1            -1        . . .      -1          0  |
-     !     |_                                                 _|
-     ! Where B(i,j) = Trace(e(i) Transpose(e(j)) )
-     ! 6)  Solve B*COEFF = RHS which is:
-     ! _                                             _  _  _     _  _
-     ! |                                               ||    |   |    |
-     ! |  B(1,1)      B(1,2)     . . .     B(1,J)  -1  ||  C1|   |  0 |
-     ! |  B(2,1)      B(2,2)     . . .     B(2,J)  -1  ||  C2|   |  0 |
-     ! |  .            .                     .      .  ||  . |   |  0 |
-     ! |  .            .                     .      .  ||  . | = |  0 |
-     ! |  .            .                     .      .  ||  . |   |  0 |
-     ! |  B(I,1)      B(I,2)     . . .     B(I,J)  -1  ||  Ci|   |  0 |
-     ! | -1            -1        . . .      -1      0  || -L |   | -1 |
-     ! |_                                             _||_  _|   |_  _|
-     ! 7) Form a new operator matrix based on O(new) = [Sum over i] c(i)O(i)
-     ! 8) Diagonalize the operator matrix to form a new density matrix.
-     ! As in scf.F, each step wil be reviewed as we pass through the code.
+     ! The purpose of this subroutine is to perform 3 regular SCF steps before
+     ! calling uscf_electdiis to utilize Pulay's accelerated
+     ! scf convergence.
      !---------------------------------------------------------------------------
   
      call allocate_quick_uscf(ierr)
@@ -447,7 +414,7 @@ contains
         quick_qm_struct%densebOld(:,:) = quick_qm_struct%denseb(:,:)
         
         !-----------------------------------------------
-        ! 10) Diagonalize the operator matrix to form a new density matrix.
+        ! 4) Diagonalize the operator matrix to form a new density matrix.
         ! First you have to transpose this into an orthogonal basis, which
         ! is accomplished by calculating Transpose[X] . O . X.
         !-----------------------------------------------
@@ -480,8 +447,10 @@ contains
             enddo
         enddo
 
+        quick_qm_struct%dense(:,:) = 0.2*quick_qm_struct%dense(:,:) + 0.8*quick_scratch%hold(:,:)
+
         !-----------------------------------------------
-        ! 12) Diagonalize the beta operator matrix to form a new beta density matrix.
+        ! 5) Diagonalize the beta operator matrix to form a new beta density matrix.
         ! First you have to transpose this into an orthogonal basis, which
         ! is accomplished by calculating Transpose[X] . O . X.
         !-----------------------------------------------
@@ -512,6 +481,8 @@ contains
                 enddo
             enddo
         enddo
+
+        quick_qm_struct%denseb(:,:) = 0.2*quick_qm_struct%denseb(:,:) + 0.8*quick_scratch%hold(:,:)
 
         if(verbose) write (ioutfile,'("|",I3,1x)',advance="no") jscf
         if(quick_method%printEnergy)then
