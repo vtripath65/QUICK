@@ -451,13 +451,18 @@ contains
            if(idiis.le.quick_method%maxdiisscf)then
               alloperator(:,:,iidiis) = quick_qm_struct%o(:,:)
               alloperatorB(:,:,iidiis) = quick_qm_struct%ob(:,:)
+              allenergy(iidiis)    = quick_qm_struct%Eel + quick_qm_struct%Ecore
+              alldense(:,:,iidiis) = quick_qm_struct%dense(:,:) + quick_qm_struct%denseb(:,:)
            else
               do K=1,quick_method%maxdiisscf-1
                  alloperator(:,:,K) = alloperator(:,:,K+1)
                  alloperatorB(:,:,K) = alloperatorB(:,:,K+1)
+                 alldense(:,:,K)    = alldense(:,:,K+1)
               enddo
               alloperator(:,:,quick_method%maxdiisscf) = quick_qm_struct%o(:,:)
               alloperatorB(:,:,quick_method%maxdiisscf) = quick_qm_struct%ob(:,:)
+              allenergy(quick_method%maxdiisscf)    = quick_qm_struct%Eel + quick_qm_struct%Ecore
+              alldense(:,:,quick_method%maxdiisscf) = quick_qm_struct%dense(:,:) + quick_qm_struct%denseb(:,:)
            endif
   
            !-----------------------------------------------
@@ -560,50 +565,74 @@ contains
            !
            !-----------------------------------------------
   
-           BSAVE(:,:) = B(:,:)
-           call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
-  
-           IDIIS_Error_Start = 1
-           IDIIS_Error_End   = IDIISfinal
-           111     IF (LSOLERR.ne.0 .and. IDIISfinal > 0)then
-              IDIISfinal=Idiisfinal-1
-              do I=1,IDIISfinal+1
-                 do J=1,IDIISfinal+1
-                    B(I,J)=BSAVE(I+IDIIS_Error_Start,J+IDIIS_Error_Start)
-                 enddo
-              enddo
-              IDIIS_Error_Start = IDIIS_Error_Start + 1
-  
-              do i=1,IDIISfinal
-                 RHS(i)=0.0d0
-              enddo
-  
-              RHS(IDIISfinal+1)=-1.0d0
-  
-  
-              call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
-  
-              goto 111
-           endif
-  
-           !-----------------------------------------------
-           ! 9) Form a new operator matrix based on O(new) = [Sum over i] c(i)O(i)
-           ! If the solution to step eight failed, skip this step and revert
-           ! to a standard scf cycle.
-           !-----------------------------------------------
-           ! Xiao HE 07/20/2007,if the B matrix is ill-conditioned, remove the first,second... error vector
-           if (LSOLERR == 0) then
-              do J=1,nbasis
-                 do K=1,nbasis
-                    OJK=0.d0
-                    do I=IDIIS_Error_Start, IDIIS_Error_End
-                       OJK = OJK + COEFF(I-IDIIS_Error_Start+1) * alloperator(K,J,I)
-                    enddo
-                    quick_qm_struct%o(J,K) = OJK
-                 enddo
-              enddo
-              
-           endif
+            IDIIS_Error_Start = 1
+            IDIIS_Error_End   = IDIISfinal
+
+            if (errormax > quick_method%ediis_switch) then
+               !-----------------------------------------------
+               ! EDIIS path: use energy + total density history to obtain
+               ! interpolation coefficients, then extrapolate alpha and beta Fock.
+               !-----------------------------------------------
+               call ediis_coefficients(IDIISfinal, nbasis, &
+                     allenergy(1:IDIISfinal), alldense(:,:,1:IDIISfinal), &
+                     alloperator(:,:,1:IDIISfinal), COEFF(1:IDIISfinal))
+               LSOLERR = 0
+               do J=1,nbasis
+                  do K=1,nbasis
+                     OJK=0.d0
+                     do I=1, IDIISfinal
+                        OJK = OJK + COEFF(I) * alloperator(K,J,I)
+                     enddo
+                     quick_qm_struct%o(J,K) = OJK
+                  enddo
+               enddo
+            else
+               !-----------------------------------------------
+               ! Pulay DIIS path (standard LSOLVE).
+               !-----------------------------------------------
+               BSAVE(:,:) = B(:,:)
+               call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
+   
+               IDIIS_Error_Start = 1
+               IDIIS_Error_End   = IDIISfinal
+               111     IF (LSOLERR.ne.0 .and. IDIISfinal > 0)then
+                  IDIISfinal=Idiisfinal-1
+                  do I=1,IDIISfinal+1
+                     do J=1,IDIISfinal+1
+                        B(I,J)=BSAVE(I+IDIIS_Error_Start,J+IDIIS_Error_Start)
+                     enddo
+                  enddo
+                  IDIIS_Error_Start = IDIIS_Error_Start + 1
+   
+                  do i=1,IDIISfinal
+                     RHS(i)=0.0d0
+                  enddo
+   
+                  RHS(IDIISfinal+1)=-1.0d0
+   
+                  call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
+   
+                  goto 111
+               endif
+   
+               !-----------------------------------------------
+               ! 9) Form a new operator matrix based on O(new) = [Sum over i] c(i)O(i)
+               ! If the solution to step eight failed, skip this step and revert
+               ! to a standard scf cycle.
+               !-----------------------------------------------
+               ! Xiao HE 07/20/2007,if the B matrix is ill-conditioned, remove the first,second... error vector
+               if (LSOLERR == 0) then
+                  do J=1,nbasis
+                     do K=1,nbasis
+                        OJK=0.d0
+                        do I=IDIIS_Error_Start, IDIIS_Error_End
+                           OJK = OJK + COEFF(I-IDIIS_Error_Start+1) * alloperator(K,J,I)
+                        enddo
+                        quick_qm_struct%o(J,K) = OJK
+                     enddo
+                  enddo
+               endif
+            endif
            !-----------------------------------------------
            ! 10) Diagonalize the alpha operator matrix to form a new alpha density matrix.
            ! First transform into an orthogonal basis:
@@ -624,11 +653,11 @@ contains
             ! Applied when DIIS error is large enough, we are past LShift_cycle and
             ! small HOMO-LUMO gap.
             !-----------------------------------------------
-            homo = quick_molspec%nelec      ! number of alpha electrons
-            bandgap = quick_qm_struct%E(homo+1) - quick_qm_struct%E(homo)
-            if(idiis .ge. quick_method%LShift_cycle .and. errormax .gt. quick_method%LShift_err .and. &
-               quick_method%LShift_gap .gt. bandgap) then
-               LShift = .true.
+             homo = quick_molspec%nelec      ! number of alpha electrons
+             bandgap = quick_qm_struct%E(homo+1) - quick_qm_struct%E(homo)
+             if(idiis .ge. quick_method%LShift_cycle .and. errormax .gt. quick_method%LShift_err .and. &
+                quick_method%LShift_gap .gt. bandgap .and. errormax .le. quick_method%ediis_switch) then
+                LShift = .true.
                call MAT_DGEMM ('n', 'n', NBSuse, NBSuse, NBSuse, 1.0d0, alpha_op_ptr, &
                     NBSuse, quick_qm_struct%oldvec, NBSuse, 0.0d0, scratch_sq, NBSuse)
 
@@ -713,11 +742,11 @@ contains
             ! Applied when DIIS error is large enough, we are past LShift_cycle and
             ! small HOMO-LUMO gap.
             !-----------------------------------------------
-            homob = quick_molspec%nelecb    ! number of beta electrons
-            bandgapb = quick_qm_struct%Eb(homob+1) - quick_qm_struct%Eb(homob)
-            if(idiis .ge. quick_method%LShift_cycle .and. errormax .gt. quick_method%LShift_err .and. &
-               quick_method%LShift_gap .gt. bandgapb) then
-               LShiftb = .true.
+             homob = quick_molspec%nelecb    ! number of beta electrons
+             bandgapb = quick_qm_struct%Eb(homob+1) - quick_qm_struct%Eb(homob)
+             if(idiis .ge. quick_method%LShift_cycle .and. errormax .gt. quick_method%LShift_err .and. &
+                quick_method%LShift_gap .gt. bandgapb .and. errormax .le. quick_method%ediis_switch) then
+                LShiftb = .true.
                call MAT_DGEMM ('n', 'n', NBSuse, NBSuse, NBSuse, 1.0d0, beta_op_ptr, &
                     NBSuse, quick_qm_struct%oldvecb, NBSuse, 0.0d0, scratch_sq, NBSuse)
 

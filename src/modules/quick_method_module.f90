@@ -115,6 +115,10 @@ module quick_method_module
         ! Maximum number of DIIS error vectors for scf convergence.
         integer :: maxdiisscf = 10
 
+        ! EDIIS/DIIS switch threshold: use EDIIS when errormax > ediis_switch,
+        ! pure Pulay DIIS when errormax <= ediis_switch.
+        double precision :: ediis_switch = 0.1d0
+
         ! start cycle for delta density cycle
         integer :: ncyc = 3
 
@@ -798,6 +802,11 @@ module quick_method_module
                 call read(keywd, 'MAXDIIS', self%maxdiisscf)
             endif
 
+            ! EDIIS/DIIS switch threshold
+            if (index(keywd,'EDIIS_SWITCH') /= 0) then
+                call read(keywd, 'EDIIS_SWITCH', self%ediis_switch)
+            endif
+
             ! Delta DM Cycle Start
             if (index(keywd,'NCYC') /= 0) then
                 call read(keywd, 'NCYC', self%ncyc)
@@ -985,6 +994,7 @@ module quick_method_module
             self%iscf = 200
             self%iscf_sad = 200
             self%maxdiisscf = 10
+            self%ediis_switch = 0.1d0
             self%iopt = 0
             self%ncyc = 3
 

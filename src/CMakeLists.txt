@@ -37,7 +37,7 @@ set(QUICK_MODULES_SOURCES
 	quick_io_module.f90)
 
 set(QUICK_SUBS_FORTRAN_SOURCES Angles.f90 copyDMat.f90 copySym.f90
-	degen.f90 denspt.f90 dipole.f90 EffChar.f90
+	degen.f90 denspt.f90 dipole.f90 ediis.f90 EffChar.f90
 	findBlock.f90 fmt.f90 getinum.f90
 	getNum.f90 greedy_distrubute.f90 hrr.f90 iatoi.f90
 	iatoimp.f90 iwhole.f90

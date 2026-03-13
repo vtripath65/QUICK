@@ -20,7 +20,7 @@ module quick_scf_module
   private
 
   public :: allocate_quick_scf, deallocate_quick_scf, scf 
-  public :: B, BSAVE, BCOPY, W, COEFF, RHS, allerror, alloperator
+  public :: B, BSAVE, BCOPY, W, COEFF, RHS, allerror, alloperator, allenergy, alldense
 
 !  type quick_scf_type
 
@@ -40,6 +40,10 @@ module quick_scf_module
     double precision, allocatable, dimension(:,:,:) :: allerror
 
     double precision, allocatable, dimension(:,:,:) :: alloperator
+
+    ! EDIIS storage: per-iteration SCF energies and density matrices
+    double precision, allocatable, dimension(:)     :: allenergy
+    double precision, allocatable, dimension(:,:,:) :: alldense
 
 !  end type quick_scf_type
 
@@ -66,6 +70,8 @@ contains
     if(.not. allocated(RHS))         allocate(RHS(quick_method%maxdiisscf+1), stat=ierr)
     if(.not. allocated(allerror))    allocate(allerror(NBSuse, NBSuse, quick_method%maxdiisscf), stat=ierr)
     if(.not. allocated(alloperator)) allocate(alloperator(nbasis, nbasis, quick_method%maxdiisscf), stat=ierr)
+    if(.not. allocated(allenergy))   allocate(allenergy(quick_method%maxdiisscf), stat=ierr)
+    if(.not. allocated(alldense))    allocate(alldense(nbasis, nbasis, quick_method%maxdiisscf), stat=ierr)
 
      ! hold3, hold4 are only needed in case of near-linear dependency
      ! path where NBSuse < nbasis.  In the standard case NBSuse == nbasis and hold/hold2
@@ -84,6 +90,8 @@ contains
     RHS         = 0.0d0
     allerror    = 0.0d0
     alloperator = 0.0d0
+    allenergy   = 0.0d0
+    alldense    = 0.0d0
   end subroutine allocate_quick_scf 
 
 
@@ -101,6 +109,8 @@ contains
     if(allocated(RHS))         deallocate(RHS, stat=ierr)
     if(allocated(allerror))    deallocate(allerror, stat=ierr)
     if(allocated(alloperator)) deallocate(alloperator, stat=ierr)
+    if(allocated(allenergy))   deallocate(allenergy, stat=ierr)
+    if(allocated(alldense))    deallocate(alldense, stat=ierr)
 
     if(allocated(quick_scratch%hold3)) deallocate(quick_scratch%hold3)
     if(allocated(quick_scratch%hold4)) deallocate(quick_scratch%hold4)
@@ -467,14 +477,20 @@ contains
            ! all operator.
            !-----------------------------------------------
   
-           if(idiis.le.quick_method%maxdiisscf)then
-              alloperator(:,:,iidiis) = quick_qm_struct%o(:,:)
-           else
-              do K=1,quick_method%maxdiisscf-1
-                 alloperator(:,:,K) = alloperator(:,:,K+1)
-              enddo
-              alloperator(:,:,quick_method%maxdiisscf) = quick_qm_struct%o(:,:)
-           endif
+            if(idiis.le.quick_method%maxdiisscf)then
+               alloperator(:,:,iidiis) = quick_qm_struct%o(:,:)
+               allenergy(iidiis)       = quick_qm_struct%Eel + quick_qm_struct%Ecore
+               alldense(:,:,iidiis)    = quick_qm_struct%dense(:,:)
+            else
+               do K=1,quick_method%maxdiisscf-1
+                  alloperator(:,:,K) = alloperator(:,:,K+1)
+                  allenergy(K)       = allenergy(K+1)
+                  alldense(:,:,K)    = alldense(:,:,K+1)
+               enddo
+               alloperator(:,:,quick_method%maxdiisscf) = quick_qm_struct%o(:,:)
+               allenergy(quick_method%maxdiisscf)       = quick_qm_struct%Eel + quick_qm_struct%Ecore
+               alldense(:,:,quick_method%maxdiisscf)    = quick_qm_struct%dense(:,:)
+            endif
   
            !-----------------------------------------------
            ! 5)  Form matrix B, which is:
@@ -576,50 +592,72 @@ contains
            !
            !-----------------------------------------------
   
-           BSAVE(:,:) = B(:,:)
-           call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
-  
-           IDIIS_Error_Start = 1
-           IDIIS_Error_End   = IDIISfinal
-           111     IF (LSOLERR.ne.0 .and. IDIISfinal > 0)then
-              IDIISfinal=Idiisfinal-1
-              do I=1,IDIISfinal+1
-                 do J=1,IDIISfinal+1
-                    B(I,J)=BSAVE(I+IDIIS_Error_Start,J+IDIIS_Error_Start)
-                 enddo
-              enddo
-              IDIIS_Error_Start = IDIIS_Error_Start + 1
-  
-              do i=1,IDIISfinal
-                 RHS(i)=0.0d0
-              enddo
-  
-              RHS(IDIISfinal+1)=-1.0d0
-  
-  
-              call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
-  
-              goto 111
-           endif
-  
-           !-----------------------------------------------
-           ! 7) Form a new operator matrix based on O(new) = [Sum over i] c(i)O(i)
-           ! If the solution to step eight failed, skip this step and revert
-           ! to a standard scf cycle.
-           !-----------------------------------------------
-           ! Xiao HE 07/20/2007,if the B matrix is ill-conditioned, remove the first,second... error vector
-           if (LSOLERR == 0) then
-              do J=1,nbasis
-                 do K=1,nbasis
-                    OJK=0.d0
-                    do I=IDIIS_Error_Start, IDIIS_Error_End
-                       OJK = OJK + COEFF(I-IDIIS_Error_Start+1) * alloperator(K,J,I)
-                    enddo
-                    quick_qm_struct%o(J,K) = OJK
-                 enddo
-              enddo
-              
-           endif
+            IDIIS_Error_Start = 1
+            IDIIS_Error_End   = IDIISfinal
+
+            if (errormax > quick_method%ediis_switch) then
+               !-----------------------------------------------
+               ! EDIIS path: use energy+density history to obtain
+               ! interpolation coefficients, then extrapolate Fock.
+               !-----------------------------------------------
+               call ediis_coefficients(IDIISfinal, nbasis, &
+                     allenergy(1:IDIISfinal), alldense(:,:,1:IDIISfinal), &
+                     alloperator(:,:,1:IDIISfinal), COEFF(1:IDIISfinal))
+               LSOLERR = 0
+               do J=1,nbasis
+                  do K=1,nbasis
+                     OJK=0.d0
+                     do I=1, IDIISfinal
+                        OJK = OJK + COEFF(I) * alloperator(K,J,I)
+                     enddo
+                     quick_qm_struct%o(J,K) = OJK
+                  enddo
+               enddo
+            else
+               !-----------------------------------------------
+               ! Pulay DIIS path (standard LSOLVE).
+               !-----------------------------------------------
+               BSAVE(:,:) = B(:,:)
+               call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
+   
+               111     IF (LSOLERR.ne.0 .and. IDIISfinal > 0)then
+                  IDIISfinal=Idiisfinal-1
+                  do I=1,IDIISfinal+1
+                     do J=1,IDIISfinal+1
+                        B(I,J)=BSAVE(I+IDIIS_Error_Start,J+IDIIS_Error_Start)
+                     enddo
+                  enddo
+                  IDIIS_Error_Start = IDIIS_Error_Start + 1
+   
+                  do i=1,IDIISfinal
+                     RHS(i)=0.0d0
+                  enddo
+   
+                  RHS(IDIISfinal+1)=-1.0d0
+   
+                  call LSOLVE(IDIISfinal+1,quick_method%maxdiisscf+1,B,RHS,W,quick_method%DMCutoff,COEFF,LSOLERR)
+   
+                  goto 111
+               endif
+   
+               !-----------------------------------------------
+               ! 7) Form a new operator matrix based on O(new) = [Sum over i] c(i)O(i)
+               ! If the solution to step eight failed, skip this step and revert
+               ! to a standard scf cycle.
+               !-----------------------------------------------
+               ! Xiao HE 07/20/2007,if the B matrix is ill-conditioned, remove the first,second... error vector
+               if (LSOLERR == 0) then
+                  do J=1,nbasis
+                     do K=1,nbasis
+                        OJK=0.d0
+                        do I=IDIIS_Error_Start, IDIIS_Error_End
+                           OJK = OJK + COEFF(I-IDIIS_Error_Start+1) * alloperator(K,J,I)
+                        enddo
+                        quick_qm_struct%o(J,K) = OJK
+                     enddo
+                  enddo
+               endif
+            endif
             !-----------------------------------------------
             ! 8) Diagonalize the operator matrix to form a new density matrix.
             ! First you have to transpose this into an orthogonal basis, which
@@ -639,11 +677,11 @@ contains
             !  scratch_sq(NBSuse,NBSuse), virtual eigenvalues are shifted, then
             !  rotated back.
             !-----------------------------------------------
-            homo = quick_molspec%nelec/2
-            bandgap = quick_qm_struct%E(homo+1) - quick_qm_struct%E(homo)
-            if(idiis .ge. quick_method%LShift_cycle .and. errormax .gt. quick_method%LShift_err .and. &
-               quick_method%LShift_gap .gt. bandgap)then
-               LShift = .true.
+             homo = quick_molspec%nelec/2
+             bandgap = quick_qm_struct%E(homo+1) - quick_qm_struct%E(homo)
+             if(idiis .ge. quick_method%LShift_cycle .and. errormax .gt. quick_method%LShift_err .and. &
+                quick_method%LShift_gap .gt. bandgap .and. errormax .le. quick_method%ediis_switch)then
+                LShift = .true.
                call MAT_DGEMM ('n', 'n', NBSuse, NBSuse, NBSuse, 1.0d0, operator_ptr, &
                     NBSuse, quick_qm_struct%oldvec, NBSuse, 0.0d0, scratch_sq, NBSuse)
 
