@@ -17,7 +17,11 @@
 !---------------------------------------------------------------------!
 module quick_oeproperties_module
  private
- public :: compute_oeprop
+ public :: compute_oeprop, compute_esp, compute_ESP_charge, esp_charges
+
+ ! ESP-fitted atomic charges from the last compute_ESP_charge call (length natom);
+ ! kept so API callers (e.g. pyquick) can read them, not only the printed table
+ double precision, allocatable :: esp_charges(:)
 
  contains
 
@@ -33,9 +37,9 @@ module quick_oeproperties_module
    use quick_molsurface_module, only: generate_MKS_surfaces
    use quick_molspec_module, only: quick_molspec
    use quick_calculated_module, only: quick_qm_struct
-#ifdef MPIV
+#if defined(MPIV)
+   use quick_mpi_module, only: master, quick_comm, quick_mpi_error
    use mpi
-   use quick_mpi_module, only: master, mpierror
 #endif
    implicit none
 
@@ -52,7 +56,7 @@ module quick_oeproperties_module
         call generate_MKS_surfaces()
 #ifdef MPIV
       endif
-      call MPI_BCAST(quick_molspec%nvdwpoint,1,mpi_integer,0,MPI_COMM_WORLD,mpierror)
+      call MPI_BCAST(quick_molspec%nvdwpoint,1,mpi_integer,0,quick_comm,quick_mpi_error)
       if(.not.master)then
         allocate(quick_molspec%vdwpointxyz(3,quick_molspec%nvdwpoint), stat=alloc_status)
 
@@ -62,7 +66,7 @@ module quick_oeproperties_module
         endif
       
       endif
-      call MPI_BCAST(quick_molspec%vdwpointxyz,quick_molspec%nvdwpoint*3,mpi_double_precision,0,MPI_COMM_WORLD,mpierror)
+      call MPI_BCAST(quick_molspec%vdwpointxyz,quick_molspec%nvdwpoint*3,mpi_double_precision,0,quick_comm,quick_mpi_error)
 #endif
 
       call compute_oeprop_grid(quick_molspec%nvdwpoint,quick_molspec%vdwpointxyz)
@@ -82,11 +86,11 @@ module quick_oeproperties_module
  end Subroutine
 
  Subroutine compute_oeprop_grid(npoints,xyz_points)
-   use quick_exception_module
+   use quick_exception_module, only: RaiseException
    use quick_files_module, only: iESPFile, espFileName, iVdwSurfFile, VdwSurfFileName
    use quick_method_module, only: quick_method
    use quick_timer_module, only : timer_begin, timer_end, timer_cumer
-#ifdef MPIV
+#if defined(MPIV)
    use quick_mpi_module, only: master
 #endif
 
@@ -179,20 +183,20 @@ module quick_oeproperties_module
  !     2. esp_shell_pair: Computes the electronic contribution to the ESP     !
  !----------------------------------------------------------------------------!
  subroutine compute_esp(npoints,xyz_points,esp)
-   use quick_timer_module, only : timer_begin, timer_end, timer_cumer
    use quick_basis_module, only: jshell
    use quick_calculated_module, only: quick_qm_struct
-#ifdef MPIV
-    use mpi
+   use quick_timer_module, only : timer_begin, timer_end, timer_cumer
+#if defined(MPIV)
     use quick_basis_module, only: mpi_jshelln, mpi_jshell
-    use quick_mpi_module, only: mpirank, mpierror 
+    use quick_mpi_module, only: quick_comm, quick_comm_rank, quick_mpi_error
+    use mpi
 #endif
 #if defined(GPU) || defined(MPIV_GPU)
     use quick_method_module, only: quick_method
 #endif
 
-
    implicit none
+
    integer :: ierr, alloc_status
    integer :: IIsh, JJsh
    integer :: igridpoint, npoints
@@ -249,21 +253,21 @@ module quick_oeproperties_module
    call gpu_get_oeprop(esp_electronic)
 #if defined MPIV
    call MPI_REDUCE(esp_electronic, esp_electronic_aggregate, npoints, &
-     MPI_double_precision, MPI_SUM, 0, MPI_COMM_WORLD, mpierror)
+     MPI_double_precision, MPI_SUM, 0, quick_comm, quick_mpi_error)
 #endif
    ! Sum over contributions from different shell pairs
 #elif defined MPIV
    ! MPI parallellization is performed over shell-pairs
    ! Different processes consider different shell-pairs
-   do Ish=1,mpi_jshelln(mpirank)
-      IIsh=mpi_jshell(mpirank,Ish)
+   do Ish=1,mpi_jshelln(quick_comm_rank)
+      IIsh=mpi_jshell(quick_comm_rank,Ish)
       do JJsh=IIsh,jshell
          call esp_shell_pair(IIsh, JJsh, npoints, xyz_points, esp_electronic)
       enddo
    enddo
    ! MPI_REDUCE is called to sum over esp_electronic obtained from all the processes
    call MPI_REDUCE(esp_electronic, esp_electronic_aggregate, npoints, &
-     MPI_double_precision, MPI_SUM, 0, MPI_COMM_WORLD, mpierror)
+     MPI_double_precision, MPI_SUM, 0, quick_comm, quick_mpi_error)
 #else
    do IIsh = 1, jshell
       do JJsh = IIsh, jshell
@@ -307,7 +311,7 @@ module quick_oeproperties_module
    use quick_files_module, only: ioutfile
    use quick_exception_module, only: RaiseException
    use quick_constants_module, only : symbol
-#ifdef MPIV
+#if defined(MPIV)
    use quick_mpi_module, only: master
 #endif
 
@@ -397,6 +401,10 @@ module quick_oeproperties_module
    call DGEMV('N', natom+1, natom+1, One, A, LDA, B, 1, Zero, q, 1)
 
 !  B is copied to charge array.
+
+   if (allocated(esp_charges)) deallocate(esp_charges)
+   allocate(esp_charges(natom))
+   esp_charges = q(1:natom)
 
    Net_charge = Zero
 
@@ -526,14 +534,14 @@ module quick_oeproperties_module
  !----------------------------------------------------------------------------------!
  subroutine compute_efield()
   use quick_basis_module, only: jshell
-  use quick_exception_module
+  use quick_exception_module, only: RaiseException
   use quick_files_module, only: iEFIELDFile, efieldFileName
   use quick_molspec_module, only: quick_molspec
   use quick_timer_module, only: timer_begin, timer_end, timer_cumer
-#ifdef MPIV
-   use mpi
+#if defined(MPIV)
    use quick_basis_module, only: mpi_jshelln, mpi_jshell
-   use quick_mpi_module, only: master, mpirank, mpierror
+   use quick_mpi_module, only: master, quick_comm, quick_comm_rank, quick_mpi_error
+   use mpi
 #endif
 
    implicit none
@@ -572,14 +580,14 @@ module quick_oeproperties_module
    ! Computes EField_ELEC by summing over contrbutions from individual shell-pairs
 
 #ifdef MPIV
-   do Ish=1,mpi_jshelln(mpirank)
-      IIsh=mpi_jshell(mpirank,Ish)
+   do Ish=1,mpi_jshelln(quick_comm_rank)
+      IIsh=mpi_jshell(quick_comm_rank,Ish)
       do JJsh=IIsh,jshell
          call efield_shell_pair(IIsh, JJsh, efield_electronic)
       enddo
    enddo
    call MPI_REDUCE(efield_electronic, efield_electronic_aggregate, 3 * quick_molspec%nextpoint, &
-     MPI_double_precision, MPI_SUM, 0, MPI_COMM_WORLD, mpierror)
+     MPI_double_precision, MPI_SUM, 0, quick_comm, quick_mpi_error)
 #else
    do IIsh = 1, jshell
       do JJsh = IIsh, jshell

@@ -5,16 +5,18 @@ defaults:
     shell: bash
 
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - '.github/workflows/build_test_serial.yml'
-      - '.github/workflows/build_test_cuda.yml'
+  workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened]
     paths-ignore:
       - '**.md'
       - '.github/workflows/build_test_serial.yml'
       - '.github/workflows/build_test_cuda.yml'
+      - '.github/workflows/build_test_cuda_enablef.yml'
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}-mpi
+  cancel-in-progress: true
 
 jobs:
   build-and-test-mpi-legacy-configure-make:
@@ -279,6 +281,8 @@ jobs:
             mpi-install: 'openmpi-bin openmpi-common libopenmpi-dev'
             hdf5-install: ''
             hdf5-restart-support: FALSE
+            python-version: '3.12'
+            numpy-version: '2.1'
           - os: 'ubuntu-24.04'
             compiler-type: 'GNU'
             mpi-type: 'MPICH'
@@ -378,7 +382,7 @@ jobs:
             mpi-install: 'openmpi-bin openmpi-common libopenmpi-dev'
             hdf5-install: ''
             hdf5-restart-support: FALSE
-          - os: 'macos-14'
+          - os: 'macos-26'
             compiler-type: 'GNU'
             mpi-type: 'OpenMPI'
             compiler-version: '15'
@@ -389,7 +393,7 @@ jobs:
             mpi-install: 'open-mpi'
             hdf5-install: 'hdf5'
             hdf5-restart-support: TRUE
-          - os: 'macos-14'
+          - os: 'macos-26'
             compiler-type: 'CLANG'
             mpi-type: 'OpenMPI'
             compiler-version: '20'
@@ -424,6 +428,8 @@ jobs:
             mpi-install: 'open-mpi'
             hdf5-install: 'hdf5'
             hdf5-restart-support: TRUE
+            python-version: '3.13'
+            numpy-version: '2.2'
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} - ${{ matrix.mpi-type }} - CMake - ${{ matrix.compiler-type }} - ${{ matrix.compiler-version }}
     steps:
@@ -575,20 +581,36 @@ jobs:
             echo "CMake version:"
             cmake --version
           fi
+      - name: 'Set up Python for pyquick'
+        if: matrix.python-version
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 'Install numpy, mpi4py and pytest for pyquick'
+        if: matrix.python-version
+        run: |
+          python3 -m pip install "numpy==${{ matrix.numpy-version }}.*" meson ninja pytest
+          # mpi4py must use the same MPI library as libquick_mpi, so build it from source
+          MPICC=$(which mpicc) python3 -m pip install --no-binary=mpi4py mpi4py
       - name: 'Configure MPI Version'
         run: |
           mkdir build
+          # pyquick is built in jobs that set python-version
+          PYQUICK=""
+          if [ -n "${{ matrix.python-version }}" ]; then
+            PYQUICK="-DPYTHON=TRUE -DPython3_EXECUTABLE=$(which python3)"
+          fi
           cd build
           if [ ${{ matrix.compiler-type }} == 'INTELLLVM' ]; then
             source /opt/intel/oneapi/setvars.sh
             cmake .. -DCOMPILER=${{ matrix.compiler-type }} \
               -DMPI=TRUE -DENABLEF=TRUE -DHDF5=${{ matrix.hdf5-restart-support }} \
-              -DCMAKE_INSTALL_PREFIX=$PWD/../install \
+              -DCMAKE_INSTALL_PREFIX=$PWD/../install $PYQUICK \
               -DMKL_HOME=$MKLROOT -DMKL_MULTI_THREADED=FALSE -DTRUST_SYSTEM_LIBS=TRUE
           else
             cmake .. -DCOMPILER=${{ matrix.compiler-type }} \
               -DMPI=TRUE -DENABLEF=TRUE -DHDF5=${{ matrix.hdf5-restart-support }} \
-              -DCMAKE_INSTALL_PREFIX=$PWD/../install
+              -DCMAKE_INSTALL_PREFIX=$PWD/../install $PYQUICK
           fi
       - name: 'Build and Install MPI Version Using 2 Jobs'
         run: |
